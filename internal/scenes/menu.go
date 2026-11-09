@@ -24,6 +24,7 @@ type TorchSpark struct {
 type MenuScene struct {
 	navigator    SceneNavigator
 	btnPlay      *ui.Button
+	btnSanctuary *ui.Button
 	btnOptions   *ui.Button
 	btnQuit      *ui.Button
 	frameCounter int
@@ -32,16 +33,17 @@ type MenuScene struct {
 
 // NewMenuScene instancia a tela de menu no estilo castelo medieval.
 func NewMenuScene(nav SceneNavigator) *MenuScene {
-	btnW := 260.0
-	btnH := 48.0
+	btnW := 270.0
+	btnH := 46.0
 	centerX := (800.0 - btnW) / 2
 
 	return &MenuScene{
-		navigator:  nav,
-		btnPlay:    ui.NewButton(centerX, 290, btnW, btnH, "⚔  INICIAR JORNADA  ⚔"),
-		btnOptions: ui.NewButton(centerX, 355, btnW, btnH, "⚙  OPÇÕES DO REINO  ⚙"),
-		btnQuit:    ui.NewButton(centerX, 420, btnW, btnH, "⛨  ABANDONAR CASTELO  ⛨"),
-		sparks:     make([]*TorchSpark, 0, 40),
+		navigator:    nav,
+		btnPlay:      ui.NewButton(centerX, 270, btnW, btnH, "⚔  INICIAR JORNADA  ⚔"),
+		btnSanctuary: ui.NewButton(centerX, 330, btnW, btnH, "⚜  SANTUÁRIO / EVOLUÇÃO  ⚜"),
+		btnOptions:   ui.NewButton(centerX, 390, btnW, btnH, "⚙  OPÇÕES DO REINO  ⚙"),
+		btnQuit:      ui.NewButton(centerX, 450, btnW, btnH, "⛨  ABANDONAR CASTELO  ⛨"),
+		sparks:       make([]*TorchSpark, 0, 40),
 	}
 }
 
@@ -50,11 +52,14 @@ func (m *MenuScene) Update() error {
 	m.frameCounter++
 
 	m.btnPlay.Update()
+	m.btnSanctuary.Update()
 	m.btnOptions.Update()
 	m.btnQuit.Update()
 
 	if m.btnPlay.IsClicked() {
 		m.navigator.SwitchToClassSelect()
+	} else if m.btnSanctuary.IsClicked() {
+		m.navigator.SwitchToSanctuary()
 	} else if m.btnOptions.IsClicked() {
 		m.navigator.SwitchToOptions()
 	} else if m.btnQuit.IsClicked() {
@@ -126,6 +131,7 @@ func (m *MenuScene) Draw(screen *ebiten.Image) {
 
 	// 7. Botões no estilo medieval
 	m.btnPlay.Draw(screen)
+	m.btnSanctuary.Draw(screen)
 	m.btnOptions.Draw(screen)
 	m.btnQuit.Draw(screen)
 

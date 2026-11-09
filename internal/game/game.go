@@ -62,12 +62,16 @@ func (g *Game) SwitchToClassSelect() {
 	g.currentScene = scenes.NewClassSelectScene(g)
 }
 
+func (g *Game) SwitchToSanctuary() {
+	g.currentScene = scenes.NewSanctuaryScene(g)
+}
+
 func (g *Game) SwitchToGameplay(class entities.ClassType) {
 	g.currentScene = scenes.NewGameplayScene(g, class)
 }
 
-func (g *Game) SwitchToGameOver(score int, wave int, class entities.ClassType) {
-	g.currentScene = scenes.NewGameOverScene(g, score, wave, class)
+func (g *Game) SwitchToGameOver(score int, wave int, class entities.ClassType, soulsGained int) {
+	g.currentScene = scenes.NewGameOverScene(g, score, wave, class, soulsGained)
 }
 
 func (g *Game) SwitchToOptions() {

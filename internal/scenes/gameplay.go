@@ -12,6 +12,8 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/vector"
 
 	"joguinho/internal/entities"
+	"joguinho/internal/progression"
+	"joguinho/internal/sprites"
 	"joguinho/internal/ui"
 )
 
@@ -23,7 +25,7 @@ type FloatingText struct {
 	Lifetime int
 }
 
-// GameplayScene gerencia toda a partida ativa do jogo e o menu de pausa (ESC).
+// GameplayScene gerencia toda a partida ativa do jogo, habilidades especiais e o menu de pausa (ESC).
 type GameplayScene struct {
 	navigator     SceneNavigator
 	player        *entities.Player
@@ -31,10 +33,14 @@ type GameplayScene struct {
 	projectiles   []*entities.Projectile
 	slashes       []*entities.Slash
 	drops         []*entities.Drop
+	arrowRains    []*entities.ArrowRainEffect
+	firePillars   []*entities.FirePillarEffect
 	floatingTexts []*FloatingText
 
-	hpBar   *ui.ProgressBar
-	manaBar *ui.ProgressBar
+	hpBar      *ui.ProgressBar
+	manaBar    *ui.ProgressBar
+	specialBar *ui.ProgressBar
+	soulIcon   *ebiten.Image
 
 	nextEnemyID    uint64
 	spawnTimer     int
@@ -44,7 +50,8 @@ type GameplayScene struct {
 	killsToWave    int
 	score          int
 	totalKills     int
-	survivalFrames int // Contador para tempo sobrevivido (MM:SS)
+	soulsCollected int
+	survivalFrames int
 
 	// Menu de Pausa (ESC)
 	isPaused    bool
@@ -53,15 +60,28 @@ type GameplayScene struct {
 	btnMainMenu *ui.Button
 }
 
-// NewGameplayScene inicia uma nova partida para a classe informada.
+// NewGameplayScene inicia uma nova partida para a classe informada aplicando os meta upgrades.
 func NewGameplayScene(nav SceneNavigator, class entities.ClassType) *GameplayScene {
 	p := entities.NewPlayer(class, 400, 320)
 
-	hpBar := ui.NewProgressBar(20, 10, 200, 18, "HP", p.MaxHP, color.RGBA{R: 220, G: 50, B: 50, A: 255})
+	hpBar := ui.NewProgressBar(20, 10, 190, 16, "HP", p.MaxHP, color.RGBA{R: 220, G: 50, B: 50, A: 255})
 	var manaBar *ui.ProgressBar
 	if p.MaxMana > 0 {
-		manaBar = ui.NewProgressBar(20, 32, 160, 14, "MP", p.MaxMana, color.RGBA{R: 50, G: 120, B: 240, A: 255})
+		manaBar = ui.NewProgressBar(20, 29, 150, 13, "MP", p.MaxMana, color.RGBA{R: 50, G: 120, B: 240, A: 255})
 	}
+
+	specialLabel := "Especial [E/Dir]"
+	switch class {
+	case entities.ClassWarrior:
+		specialLabel = "Escudo [E/Dir]"
+	case entities.ClassArcher:
+		specialLabel = "Chuva [E/Dir]"
+	case entities.ClassMage:
+		specialLabel = "Pilar [E/Dir]"
+	}
+
+	specialBar := ui.NewProgressBar(220, 10, 150, 16, specialLabel, float64(p.SpecialMaxCD), color.RGBA{R: 245, G: 190, B: 50, A: 255})
+	specialBar.ShowFraction = false
 
 	btnW := 280.0
 	btnH := 44.0
@@ -77,12 +97,15 @@ func NewGameplayScene(nav SceneNavigator, class entities.ClassType) *GameplaySce
 		player:         p,
 		hpBar:          hpBar,
 		manaBar:        manaBar,
+		specialBar:     specialBar,
+		soulIcon:       sprites.GetSoulFragmentSprite(),
 		spawnTimer:     0,
 		spawnDelay:     72,
 		wave:           1,
 		killsInWave:    0,
 		killsToWave:    12,
 		score:          0,
+		soulsCollected: 0,
 		survivalFrames: 0,
 		isPaused:       false,
 		btnResume:      ui.NewButton(centerX, 250, btnW, btnH, "⚔  RETOMAR BATALHA  ⚔"),
@@ -93,12 +116,10 @@ func NewGameplayScene(nav SceneNavigator, class entities.ClassType) *GameplaySce
 
 // Update executa o ciclo de lógica ou o menu de pausa ao pressionar ESC.
 func (g *GameplayScene) Update() error {
-	// Pressionar ESC alterna a pausa do jogo e abre o menu de retorno
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
 		g.isPaused = !g.isPaused
 	}
 
-	// Se estiver pausado, processa apenas o menu de pausa medieval e interrompe o ciclo do jogo
 	if g.isPaused {
 		g.btnResume.Update()
 		g.btnOpts.Update()
@@ -125,32 +146,45 @@ func (g *GameplayScene) Update() error {
 	// 1. Atualiza Player
 	g.player.Update(800, 600)
 
-	// Atualiza barras do HUD com os valores atuais e máximos
+	// Atualiza barras do HUD
 	g.hpBar.SetValues(g.player.HP, g.player.MaxHP)
 	if g.manaBar != nil {
 		g.manaBar.SetValues(g.player.Mana, g.player.MaxMana)
 	}
 
+	// Atualiza barra da habilidade especial
+	specCurrent := float64(g.player.SpecialMaxCD - g.player.SpecialCD)
+	if specCurrent < 0 {
+		specCurrent = 0
+	}
+	g.specialBar.SetValues(specCurrent, float64(g.player.SpecialMaxCD))
+
 	// Verifica se jogador morreu
 	if g.player.HP <= 0 {
-		g.navigator.SwitchToGameOver(g.score, g.wave, g.player.ClassType)
+		g.handleGameOver()
 		return nil
 	}
 
-	// 2. Ações de Ataque (Clique Esquerdo ou Tecla Espaço)
+	// 2. Ataque Básico (Clique Esquerdo ou Tecla Espaço)
 	attackTriggered := ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) || ebiten.IsKeyPressed(ebiten.KeySpace)
 	if attackTriggered && g.player.CanAttack() {
 		g.handlePlayerAttack()
 	}
 
-	// 3. Spawner de Inimigos dinâmico
+	// 3. Habilidade Especial Ativa (Tecla E ou Botão Direito do Mouse)
+	specialTriggered := inpututil.IsKeyJustPressed(ebiten.KeyE) || inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight)
+	if specialTriggered && g.player.CanUseSpecial() {
+		g.handleSpecialSkill()
+	}
+
+	// 4. Spawner de Inimigos dinâmico
 	g.spawnTimer++
 	if g.spawnTimer >= g.spawnDelay {
 		g.spawnTimer = 0
 		g.spawnEnemy()
 	}
 
-	// 4. Atualiza Slashes (Melee do Guerreiro)
+	// 5. Atualiza Slashes (Melee do Guerreiro)
 	for i := len(g.slashes) - 1; i >= 0; i-- {
 		s := g.slashes[i]
 		s.Update()
@@ -159,7 +193,24 @@ func (g *GameplayScene) Update() error {
 		}
 	}
 
-	// 5. Atualiza Projéteis (do Jogador e dos Inimigos Atiradores)
+	// 6. Atualiza Habilidades Especiais em Área (Chuva de Flechas e Pilar de Fogo)
+	for i := len(g.arrowRains) - 1; i >= 0; i-- {
+		ar := g.arrowRains[i]
+		ar.Update()
+		if !ar.Active {
+			g.arrowRains = append(g.arrowRains[:i], g.arrowRains[i+1:]...)
+		}
+	}
+
+	for i := len(g.firePillars) - 1; i >= 0; i-- {
+		fp := g.firePillars[i]
+		fp.Update()
+		if !fp.Active {
+			g.firePillars = append(g.firePillars[:i], g.firePillars[i+1:]...)
+		}
+	}
+
+	// 7. Atualiza Projéteis e Reflexão por Escudo
 	pBounds := g.player.Bounds()
 	for i := len(g.projectiles) - 1; i >= 0; i-- {
 		proj := g.projectiles[i]
@@ -169,6 +220,14 @@ func (g *GameplayScene) Update() error {
 		if !proj.Active || proj.X < 0 || proj.X > 800 || proj.Y < 45 || proj.Y > 600 {
 			g.projectiles = append(g.projectiles[:i], g.projectiles[i+1:]...)
 			continue
+		}
+
+		// Se for projétil inimigo: checa se é refletido pela Postura de Escudo do Guerreiro!
+		if proj.IsEnemy && g.player.ClassType == entities.ClassWarrior && g.player.Shield.Active {
+			if g.player.CheckShieldReflect(proj) {
+				g.addFloatingText("REFLETIDO!", proj.X, proj.Y-12, color.RGBA{R: 255, G: 235, B: 100, A: 255})
+				continue
+			}
 		}
 
 		// Projétil inimigo colidindo com o jogador
@@ -181,7 +240,7 @@ func (g *GameplayScene) Update() error {
 		}
 	}
 
-	// 6. Atualiza Inimigos & Colisões com ataques do jogador
+	// 8. Atualiza Inimigos & Colisões com ataques e habilidades
 	px, py := g.player.Center()
 	for i := len(g.enemies) - 1; i >= 0; i-- {
 		e := g.enemies[i]
@@ -204,7 +263,7 @@ func (g *GameplayScene) Update() error {
 			}
 		}
 
-		// Colisão com Projéteis do Jogador
+		// Colisão com Projéteis do Jogador (ou Projéteis Refletidos pelo Escudo!)
 		for _, proj := range g.projectiles {
 			if proj.Active && !proj.IsEnemy && proj.Bounds().Intersects(eBounds) {
 				proj.Active = false
@@ -218,7 +277,33 @@ func (g *GameplayScene) Update() error {
 			}
 		}
 
-		// Colisão Inimigo vs Jogador (Dano por contato com cooldown)
+		// Dano contínuo da Chuva de Flechas (Arqueiro)
+		for _, ar := range g.arrowRains {
+			if ar.CollidesWith(eBounds) && g.survivalFrames%10 == 0 {
+				dmg := ar.DamagePerTick * g.player.GetDamageMultiplier()
+				killed := e.TakeDamage(dmg)
+				g.addFloatingText(fmt.Sprintf("-%.0f", dmg), e.X, e.Y-4, color.RGBA{R: 120, G: 240, B: 140, A: 255})
+				// Aplica desaceleração temporária
+				e.Speed *= 0.65
+				if killed {
+					g.onEnemyDefeated(e)
+				}
+			}
+		}
+
+		// Dano contínuo e intenso do Pilar de Fogo (Mago)
+		for _, fp := range g.firePillars {
+			if fp.CollidesWith(eBounds) && g.survivalFrames%8 == 0 {
+				dmg := fp.DamagePerTick * g.player.GetDamageMultiplier()
+				killed := e.TakeDamage(dmg)
+				g.addFloatingText(fmt.Sprintf("-%.0f", dmg), e.X, e.Y-4, color.RGBA{R: 255, G: 140, B: 30, A: 255})
+				if killed {
+					g.onEnemyDefeated(e)
+				}
+			}
+		}
+
+		// Colisão Inimigo vs Jogador (Dano por contato)
 		if e.Alive && eBounds.Intersects(pBounds) {
 			if e.CanDamagePlayer() {
 				if g.player.TakeDamage(e.Damage) {
@@ -234,7 +319,7 @@ func (g *GameplayScene) Update() error {
 		}
 	}
 
-	// 7. Atualiza e Coleta Drops no chão
+	// 9. Atualiza e Coleta Drops no chão
 	for i := len(g.drops) - 1; i >= 0; i-- {
 		d := g.drops[i]
 		d.Update()
@@ -243,14 +328,14 @@ func (g *GameplayScene) Update() error {
 			continue
 		}
 
-		// Verifica colisão do jogador com o item
 		if d.Bounds().Intersects(pBounds) {
 			d.Active = false
 			feedback, clr := g.player.ApplyDrop(d)
 			g.addFloatingText(feedback, g.player.X-20, g.player.Y-20, clr)
 
-			// Se for Semente do Caos, invoca emboscada imediata de 4 Corredores!
-			if d.Type == entities.DropChaosSeed {
+			if d.Type == entities.DropSoulFragment {
+				g.soulsCollected += d.SoulAmount
+			} else if d.Type == entities.DropChaosSeed {
 				g.spawnChaosAmbush()
 			}
 
@@ -258,7 +343,7 @@ func (g *GameplayScene) Update() error {
 		}
 	}
 
-	// 8. Atualiza Textos Flutuantes
+	// 10. Atualiza Textos Flutuantes
 	for i := len(g.floatingTexts) - 1; i >= 0; i-- {
 		ft := g.floatingTexts[i]
 		ft.Y -= 0.65
@@ -271,7 +356,7 @@ func (g *GameplayScene) Update() error {
 	return nil
 }
 
-// handlePlayerAttack executa o tipo de golpe conforme a classe.
+// handlePlayerAttack executa o tipo de golpe padrão conforme a classe.
 func (g *GameplayScene) handlePlayerAttack() {
 	px, py := g.player.Center()
 	mx, my := ebiten.CursorPosition()
@@ -279,20 +364,17 @@ func (g *GameplayScene) handlePlayerAttack() {
 
 	switch g.player.ClassType {
 	case entities.ClassWarrior:
-		// Golpe Melee: espada larga corta em arco amplo com alto impacto
-		slash := entities.NewSlash(px, py, fmx, fmy, 72, 68)
+		slash := entities.NewSlash(px, py, fmx, fmy, g.player.SlashRange, 68)
 		g.slashes = append(g.slashes, slash)
 		g.player.ResetAttackCD()
 
 	case entities.ClassArcher:
-		// Disparo de flecha rápida e contínua
 		dx := fmx - px
 		dy := fmy - py
 		dist := math.Hypot(dx, dy)
 		if dist > 0.001 {
-			speed := 9.5
-			vx := (dx / dist) * speed
-			vy := (dy / dist) * speed
+			vx := (dx / dist) * g.player.ArrowSpeed
+			vy := (dy / dist) * g.player.ArrowSpeed
 			proj := entities.NewProjectile(px, py, vx, vy, 3.5, 28, color.RGBA{R: 120, G: 255, B: 120, A: 255}, 85, entities.ProjectileKindArrow, false)
 			g.projectiles = append(g.projectiles, proj)
 			g.player.ResetAttackCD()
@@ -309,13 +391,13 @@ func (g *GameplayScene) handlePlayerAttack() {
 			vy := (dy / dist) * speed
 
 			if g.player.Mana >= manaCost {
-				// Magia Arcana Poderosa
 				g.player.Mana -= manaCost
-				proj := entities.NewProjectile(px, py, vx, vy, 8.5, 55, color.RGBA{R: 70, G: 160, B: 255, A: 255}, 90, entities.ProjectileKindMagic, false)
+				dmg := 55.0 * g.player.SpellMultiplier
+				proj := entities.NewProjectile(px, py, vx, vy, 8.5, dmg, color.RGBA{R: 70, G: 160, B: 255, A: 255}, 90, entities.ProjectileKindMagic, false)
 				g.projectiles = append(g.projectiles, proj)
 			} else {
-				// Centelha menor sem gasto de mana
-				proj := entities.NewProjectile(px, py, vx*0.9, vy*0.9, 4.0, 15, color.RGBA{R: 160, G: 190, B: 255, A: 200}, 70, entities.ProjectileKindMagicBasic, false)
+				dmg := 15.0 * g.player.SpellMultiplier
+				proj := entities.NewProjectile(px, py, vx*0.9, vy*0.9, 4.0, dmg, color.RGBA{R: 160, G: 190, B: 255, A: 200}, 70, entities.ProjectileKindMagicBasic, false)
 				g.projectiles = append(g.projectiles, proj)
 			}
 			g.player.ResetAttackCD()
@@ -323,10 +405,40 @@ func (g *GameplayScene) handlePlayerAttack() {
 	}
 }
 
+// handleSpecialSkill executa a habilidade especial ativa com base na classe do herói.
+func (g *GameplayScene) handleSpecialSkill() {
+	mx, my := ebiten.CursorPosition()
+	fmx, fmy := float64(mx), float64(my)
+
+	switch g.player.ClassType {
+	case entities.ClassWarrior:
+		// Guerreiro: Postura de Escudo (Reflexão e Barreira)
+		g.player.ActivateShield()
+		g.addFloatingText("POSTURA DE ESCUDO!", g.player.X-20, g.player.Y-25, color.RGBA{R: 255, G: 220, B: 80, A: 255})
+
+	case entities.ClassArcher:
+		// Arqueiro: Chuva de Flechas em Área
+		rain := entities.NewArrowRain(fmx, fmy, g.player.ArrowRainRadius, g.player.ArrowRainDamage, 130)
+		g.arrowRains = append(g.arrowRains, rain)
+		g.player.SpecialCD = g.player.SpecialMaxCD
+		g.addFloatingText("CHUVA DE FLECHAS!", fmx-40, fmy-20, color.RGBA{R: 120, G: 240, B: 140, A: 255})
+
+	case entities.ClassMage:
+		// Mago: Pilar de Fogo (Erupção Mágica)
+		if g.player.Mana >= g.player.FirePillarManaCost {
+			g.player.Mana -= g.player.FirePillarManaCost
+			pillar := entities.NewFirePillar(fmx, fmy, g.player.FirePillarRadius, g.player.FirePillarDamage, g.player.FirePillarDuration)
+			g.firePillars = append(g.firePillars, pillar)
+			g.player.SpecialCD = g.player.SpecialMaxCD
+			g.addFloatingText("PILAR DE FOGO!", fmx-35, fmy-25, color.RGBA{R: 255, G: 140, B: 40, A: 255})
+		}
+	}
+}
+
 // spawnEnemy cria um inimigo nas bordas da tela baseado na composição da onda atual.
 func (g *GameplayScene) spawnEnemy() {
 	g.nextEnemyID++
-	edge := rand.Intn(4) // 0: Top, 1: Right, 2: Bottom, 3: Left
+	edge := rand.Intn(4)
 	var sx, sy float64
 
 	switch edge {
@@ -392,7 +504,7 @@ func (g *GameplayScene) spawnEnemy() {
 	g.enemies = append(g.enemies, enemy)
 }
 
-// spawnChaosAmbush invoca 4 corredores rápidos ao redor do jogador pela Semente do Caos!
+// spawnChaosAmbush invoca 4 corredores rápidos ao redor do jogador pela Semente do Caos.
 func (g *GameplayScene) spawnChaosAmbush() {
 	px, py := g.player.Center()
 	angles := []float64{0, math.Pi / 2, math.Pi, 3 * math.Pi / 2}
@@ -421,15 +533,30 @@ func (g *GameplayScene) spawnChaosAmbush() {
 	}
 }
 
-// onEnemyDefeated contabiliza pontuação, chance de drops e avanço de onda.
+// onEnemyDefeated contabiliza pontuação, drops e avanço de onda.
 func (g *GameplayScene) onEnemyDefeated(e *entities.Enemy) {
 	g.score += e.ScoreValue * g.wave
 	g.totalKills++
 	g.killsInWave++
 
-	// Chance de Drop (~35% de chance)
-	if rand.Float64() < 0.35 {
-		g.rollDrop(e.X+e.Width/2, e.Y+e.Height/2)
+	// 1. Chance de Drop de Fragmento de Alma Meta (~45% para comuns/corredores/atiradores, 100% para tanques)
+	soulDropChance := 0.45
+	soulAmount := 1
+	if e.Type == entities.EnemyTypeTank {
+		soulDropChance = 1.0
+		soulAmount = 3 + rand.Intn(3) // 3 a 5 fragmentos!
+	} else if e.Type == entities.EnemyTypeShooter || e.Type == entities.EnemyTypeRunner {
+		soulAmount = 1 + rand.Intn(2)
+	}
+
+	if rand.Float64() < soulDropChance {
+		soulDrop := entities.NewSoulDrop(e.X+e.Width/2, e.Y+e.Height/2, soulAmount)
+		g.drops = append(g.drops, soulDrop)
+	}
+
+	// 2. Chance de Drop de Itens Regulares (~30%)
+	if rand.Float64() < 0.30 {
+		g.rollRegularDrop(e.X+e.Width/2, e.Y+e.Height/2)
 	}
 
 	// Transição de onda
@@ -454,8 +581,8 @@ func (g *GameplayScene) onEnemyDefeated(e *entities.Enemy) {
 	}
 }
 
-// rollDrop sorteia um drop benigno ou maligno e cria a entidade no chão.
-func (g *GameplayScene) rollDrop(x, y float64) {
+// rollRegularDrop sorteia um item benigno ou maligno tradicional.
+func (g *GameplayScene) rollRegularDrop(x, y float64) {
 	isBuff := rand.Float64() < 0.62
 	var dType entities.DropType
 
@@ -482,6 +609,21 @@ func (g *GameplayScene) rollDrop(x, y float64) {
 	g.drops = append(g.drops, drop)
 }
 
+func (g *GameplayScene) handleGameOver() {
+	// Bônus de conversão da pontuação em fragmentos adicionais
+	bonusSouls := g.score / 500
+	totalSouls := g.soulsCollected + bonusSouls
+
+	// Persiste no save
+	progression.AddSoulFragments(totalSouls)
+	save := progression.GetSave()
+	save.TotalRuns++
+	save.TotalKills += g.totalKills
+	_ = progression.Save()
+
+	g.navigator.SwitchToGameOver(g.score, g.wave, g.player.ClassType, totalSouls)
+}
+
 // addFloatingText cria uma notificação visual flutuante.
 func (g *GameplayScene) addFloatingText(text string, x, y float64, clr color.RGBA) {
 	g.floatingTexts = append(g.floatingTexts, &FloatingText{
@@ -493,9 +635,8 @@ func (g *GameplayScene) addFloatingText(text string, x, y float64, clr color.RGB
 	})
 }
 
-// Draw renderiza a arena, chão, entidades, drops, projéteis, HUD e o menu de pausa modal se ativo.
+// Draw renderiza o jogo, chão, áreas de feitiços, entidades, HUD e o menu de pausa.
 func (g *GameplayScene) Draw(screen *ebiten.Image) {
-	// Fundo da arena
 	screen.Fill(color.RGBA{R: 20, G: 23, B: 32, A: 255})
 
 	// Piso da masmorra em blocos de pedra
@@ -507,41 +648,48 @@ func (g *GameplayScene) Draw(screen *ebiten.Image) {
 		vector.StrokeLine(screen, 0, float32(y), 800, float32(y), 1, gridClr, false)
 	}
 
-	// Paredes com relevo
 	vector.StrokeRect(screen, 6, 52, 788, 542, 3, color.RGBA{R: 70, G: 80, B: 110, A: 255}, false)
 
-	// 1. Renderiza Drops no Chão
+	// 1. Áreas de Habilidades Especiais (Chuva de Flechas e Pilar de Fogo) no chão
+	for _, ar := range g.arrowRains {
+		ar.Draw(screen)
+	}
+	for _, fp := range g.firePillars {
+		fp.Draw(screen)
+	}
+
+	// 2. Drops no Chão
 	for _, d := range g.drops {
 		d.Draw(screen)
 	}
 
-	// 2. Renderiza Inimigos
+	// 3. Inimigos
 	for _, e := range g.enemies {
 		e.Draw(screen)
 	}
 
-	// 3. Renderiza Projéteis
+	// 4. Projéteis
 	for _, p := range g.projectiles {
 		p.Draw(screen)
 	}
 
-	// 4. Renderiza Slashes (Melee)
+	// 5. Slashes (Melee)
 	for _, s := range g.slashes {
 		s.Draw(screen)
 	}
 
-	// 5. Renderiza Jogador
+	// 6. Jogador (inclui a barreira do escudo se ativa)
 	g.player.Draw(screen)
 
-	// 6. Textos Flutuantes
+	// 7. Textos Flutuantes
 	for _, ft := range g.floatingTexts {
 		ebitenutil.DebugPrintAt(screen, ft.Text, int(ft.X), int(ft.Y))
 	}
 
-	// 7. HUD Superior Completo
+	// 8. HUD Superior Completo
 	g.drawHUD(screen)
 
-	// 8. Se estiver pausado, renderiza o Menu de Pausa Medieval sobreposto
+	// 9. Menu de Pausa Medieval sobreposto
 	if g.isPaused {
 		g.drawPauseMenu(screen)
 	}
@@ -558,27 +706,43 @@ func (g *GameplayScene) drawHUD(screen *ebiten.Image) {
 		g.manaBar.Draw(screen)
 	}
 
-	// Informações centrais: Classe, Onda e Progresso de Inimigos
-	classInfo := fmt.Sprintf("[%s]", g.player.ClassType)
-	ebitenutil.DebugPrintAt(screen, classInfo, 235, 12)
+	// Barra da Habilidade Especial Ativa
+	g.specialBar.Draw(screen)
+	if g.player.SpecialCD <= 0 {
+		ebitenutil.DebugPrintAt(screen, "PRONTO!", 315, 12)
+	} else {
+		secs := float64(g.player.SpecialCD) / 60.0
+		ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%.1fs", secs), 325, 12)
+	}
 
-	waveInfo := fmt.Sprintf("ONDA: %d  (Faltam: %d)", g.wave, g.killsToWave-g.killsInWave)
-	ebitenutil.DebugPrintAt(screen, waveInfo, 335, 12)
+	// Informações de Onda
+	waveInfo := fmt.Sprintf("ONDA %d (Faltam %d)", g.wave, g.killsToWave-g.killsInWave)
+	ebitenutil.DebugPrintAt(screen, waveInfo, 385, 12)
 
-	// Tempo Sobrevivido (MM:SS) e Score à direita
+	// Contador de Fragmentos de Alma coletados na run
+	if g.soulIcon != nil {
+		op := &ebiten.DrawImageOptions{}
+		op.GeoM.Scale(1.5, 1.5)
+		op.GeoM.Translate(530, 8)
+		screen.DrawImage(g.soulIcon, op)
+	}
+	soulsStr := fmt.Sprintf("+%d Almas", g.soulsCollected)
+	ebitenutil.DebugPrintAt(screen, soulsStr, 555, 12)
+
+	// Tempo e Score
 	totalSeconds := g.survivalFrames / 60
 	mins := totalSeconds / 60
 	secs := totalSeconds % 60
-	timeStr := fmt.Sprintf("Tempo: %02d:%02d", mins, secs)
+	timeStr := fmt.Sprintf("%02d:%02d", mins, secs)
 	scoreStr := fmt.Sprintf("Score: %d", g.score)
 
-	ebitenutil.DebugPrintAt(screen, timeStr, 535, 12)
-	ebitenutil.DebugPrintAt(screen, scoreStr, 670, 12)
+	ebitenutil.DebugPrintAt(screen, timeStr, 640, 12)
+	ebitenutil.DebugPrintAt(screen, scoreStr, 700, 12)
 
-	// Linha inferior do HUD para status e dica do ESC
+	// Linha inferior do HUD para status e dicas
 	effects := g.player.GetActiveEffects()
 	if len(effects) > 0 {
-		effX := 235
+		effX := 220
 		for _, eff := range effects {
 			secsLeft := (eff.Remaining + 59) / 60
 			label := fmt.Sprintf("%s (%ds)", eff.Name, secsLeft)
@@ -591,66 +755,48 @@ func (g *GameplayScene) drawHUD(screen *ebiten.Image) {
 			effX += int(badgeW) + 8
 		}
 	} else {
-		ebitenutil.DebugPrintAt(screen, "[ESC] Menu e Pausa  |  Drops concedem dons ou maldições!", 235, 34)
+		ebitenutil.DebugPrintAt(screen, "[E ou Botão Direito]: Usar Habilidade Especial  |  [ESC]: Pausar", 220, 34)
 	}
 }
 
 // drawPauseMenu renderiza a janela modal de pausa medieval.
 func (g *GameplayScene) drawPauseMenu(dst *ebiten.Image) {
-	// Overlay escurecido sobre a partida
 	vector.DrawFilledRect(dst, 0, 0, 800, 600, color.RGBA{R: 10, G: 8, B: 6, A: 215}, false)
 
-	// Painel de carvalho e ferro forjado
 	panelW := float32(480)
 	panelH := float32(350)
 	px := float32((800 - panelW) / 2)
 	py := float32((600 - panelH) / 2)
 
-	// Sombra do painel
 	vector.DrawFilledRect(dst, px+5, py+6, panelW, panelH, color.RGBA{R: 5, G: 4, B: 3, A: 230}, false)
-
-	// Tábua de carvalho do painel
 	vector.DrawFilledRect(dst, px, py, panelW, panelH, color.RGBA{R: 44, G: 30, B: 20, A: 255}, false)
 
-	// Ranhuras horizontais na madeira
 	vector.StrokeLine(dst, px+8, py+65, px+panelW-8, py+65, 1.5, color.RGBA{R: 28, G: 18, B: 12, A: 160}, false)
 	vector.StrokeLine(dst, px+8, py+235, px+panelW-8, py+235, 1.5, color.RGBA{R: 28, G: 18, B: 12, A: 160}, false)
 
-	// Moldura dupla de ferro forjado e bronze
 	vector.StrokeRect(dst, px, py, panelW, panelH, 3.0, color.RGBA{R: 190, G: 150, B: 75, A: 255}, false)
 	vector.StrokeRect(dst, px+5, py+5, panelW-10, panelH-10, 1.2, color.RGBA{R: 90, G: 70, B: 40, A: 200}, false)
 
-	// Rebites de ferro nos 4 cantos
 	drawRivet(dst, px+12, py+12, color.RGBA{R: 245, G: 205, B: 100, A: 255})
 	drawRivet(dst, px+panelW-12, py+12, color.RGBA{R: 245, G: 205, B: 100, A: 255})
 	drawRivet(dst, px+12, py+panelH-12, color.RGBA{R: 245, G: 205, B: 100, A: 255})
 	drawRivet(dst, px+panelW-12, py+panelH-12, color.RGBA{R: 245, G: 205, B: 100, A: 255})
 
-	// Título de Pausa com visual heráldico
 	t1 := "=== ⚜ BATALHA PAUSADA ⚜ ==="
 	t2 := "O reino aguarda vosso retorno ao combate..."
 	ebitenutil.DebugPrintAt(dst, t1, int(px)+135, int(py)+22)
 	ebitenutil.DebugPrintAt(dst, t2, int(px)+100, int(py)+42)
 
-	// Estatísticas resumidas da partida atual
 	totalSeconds := g.survivalFrames / 60
 	mins := totalSeconds / 60
 	secs := totalSeconds % 60
-	statsStr := fmt.Sprintf("Classe: %s  |  Onda: %d  |  Tempo: %02d:%02d  |  Score: %d",
-		g.player.ClassType, g.wave, mins, secs, g.score)
+	statsStr := fmt.Sprintf("Classe: %s  |  Onda: %d  |  Tempo: %02d:%02d  |  Almas: %d",
+		g.player.ClassType, g.wave, mins, secs, g.soulsCollected)
 	ebitenutil.DebugPrintAt(dst, statsStr, int(px)+35, int(py)+82)
 
-	// Renderiza os botões do menu de pausa
 	g.btnResume.Draw(dst)
 	g.btnOpts.Draw(dst)
 	g.btnMainMenu.Draw(dst)
 
-	// Dica no rodapé do modal
 	ebitenutil.DebugPrintAt(dst, "Pressione [ESC] novamente para despausar e retornar", int(px)+75, int(py+panelH)-26)
-}
-
-func drawRivet(dst *ebiten.Image, x, y float32, clr color.RGBA) {
-	vector.DrawFilledCircle(dst, x, y, 2.5, color.RGBA{R: 20, G: 15, B: 10, A: 220}, true)
-	vector.DrawFilledCircle(dst, x-0.5, y-0.5, 2.0, clr, true)
-	vector.DrawFilledCircle(dst, x-0.8, y-0.8, 0.9, color.RGBA{R: 255, G: 255, B: 240, A: 230}, true)
 }

@@ -1,6 +1,6 @@
-# Dungeon Survivors (Ebitengine 2D em Go)
+# Dungeon Survivors (Roguelite 2D em Go)
 
-Um jogo de sobrevivência 2D desenvolvido nativamente em **Go** com a engine gráfica **Ebitengine v2**. O jogo roda em uma janela desktop nativa, ambientado na **Idade Média / Fantasia Medieval**, com pixel art procedural em código, dispensando o carregamento de imagens externas.
+Um jogo de sobrevivência roguelite 2D desenvolvido nativamente em **Go** com a engine gráfica **Ebitengine v2**, ambientado em um universo de **Fantasia Medieval** com gráficos em pixel art procedural em código (sem dependência de assets externos).
 
 ---
 
@@ -11,27 +11,32 @@ Um jogo de sobrevivência 2D desenvolvido nativamente em **Go** com a engine gr�
 │   └── game/
 │       └── main.go           # Ponto de entrada da aplicação desktop
 ├── internal/
+│   ├── progression/
+│   │   ├── save.go           # Sistema de persistência meta (save.json) e custos de upgrade
+│   │   └── save_test.go      # Testes unitários de save/load e progressão
 │   ├── sprites/
-│   │   └── sprites.go        # Gerador procedural de Pixel Art (Heróis, Inimigos e Drops)
+│   │   └── sprites.go        # Gerador procedural de Pixel Art (Heróis, Inimigos, Drops e Almas)
 │   ├── collision/
-│   │   ├── aabb.go           # Detecção de colisões 2D (AABB / Bounding Boxes)
+│   │   ├── aabb.go           # Detecção de colisões 2D (AABB)
 │   │   └── aabb_test.go      # Testes unitários de colisão
 │   ├── ui/
-│   │   ├── button.go         # Botões estilizados medievais com madeira, ferro forjado e rebites
-│   │   └── bar.go            # Barras dinâmicas de progresso (HP, Mana)
+│   │   ├── button.go         # Botões estilizados medievais (carvalho, ferro e rebites)
+│   │   └── bar.go            # Barras dinâmicas de progresso (HP, Mana, Cooldown)
 │   ├── entities/
-│   │   ├── player.go         # Jogador com Pixel Art, movimentação, stats e sistema de Buffs/Debuffs
-│   │   ├── enemy.go          # 4 Arquétipos de inimigos (Comum, Corredor, Tanque e Atirador)
-│   │   ├── drop.go           # Sistema de Drops (Loot Benigno e Maligno com animação flutuante)
-│   │   ├── projectile.go     # Projéteis do jogador e cuspe ácido dos atiradores
-│   │   └── slash.go          # Arco cortante do ataque Melee de espada do Guerreiro
+│   │   ├── player.go         # Herói com stats meta, postura de escudo e atributos por classe
+│   │   ├── skills.go         # Efeitos de Habilidades Especiais (Chuva de Flechas, Pilar de Fogo)
+│   │   ├── enemy.go          # 4 Arquétipos de monstros (Comum, Corredor, Tanque e Atirador)
+│   │   ├── drop.go           # Drops de buffs/debuffs e Fragmentos de Alma meta
+│   │   ├── projectile.go     # Projéteis do jogador e atiradores (com suporte a reflexão)
+│   │   └── slash.go          # Arco cortante do ataque Melee de espada
 │   ├── scenes/
 │   │   ├── scene.go          # Interface Scene e SceneNavigator
-│   │   ├── menu.go           # Menu Principal Medieval (muralhas, tochas com labaredas e brasão)
-│   │   ├── options.go        # Configurações do Reino (Fullscreen on/off, ajuste de volume)
+│   │   ├── menu.go           # Menu Principal Medieval (tochas, brasão e atalho ao Santuário)
+│   │   ├── sanctuary.go      # Santuário das Almas (Árvore de Upgrades Meta por classe)
+│   │   ├── options.go        # Configurações do Reino (Fullscreen on/off, volume)
 │   │   ├── class_select.go   # Seleção das 3 classes com prévia em Pixel Art
-│   │   ├── gameplay.go       # Loop do combate, hordas, drops e Menu de Pausa com ESC
-│   │   └── game_over.go      # Cripta da derrota com estatísticas e botões de reinício
+│   │   ├── gameplay.go       # Loop do combate, habilidades especiais ativas e pausa com ESC
+│   │   └── game_over.go      # Cripta da derrota com resgate de almas e atalho de evolução
 │   └── game/
 │       └── game.go           # Implementação de ebiten.Game (Update, Draw, Layout)
 ├── go.mod
@@ -40,21 +45,50 @@ Um jogo de sobrevivência 2D desenvolvido nativamente em **Go** com a engine gr�
 
 ---
 
-## Controles
+## Sistema Meta-Roguelite (Santuário das Almas)
 
-- **ESC**: **Abre o Menu de Pausa** durante a batalha (permite retomar o combate, alternar tela cheia ou **voltar com segurança ao Menu Principal**).
-- **W, A, S, D** ou **Setas do Teclado**: Movimentação do personagem.
-- **Mouse (Cursor)**: Direção da mira dos ataques e interação com os menus.
-- **Clique Esquerdo do Mouse** ou **Barra de Espaço**: Desferir ataque da classe.
+- **Moeda Meta (Fragmentos de Alma):** Monstros eliminados têm chance de dropar fragmentos em formato de cristal púrpura etéreo durante a batalha. Ao final da partida, a pontuação também é convertida em fragmentos extras.
+- **Persistência Automática:** Salvo localmente em `save.json` e recarregado a cada inicialização.
+- **Árvore de Upgrades Permanentes por Classe:**
+  - **Guerreiro:**
+    1. *Vitalidade Titânica:* +25 HP Máximo por nível.
+    2. *Lâmina Dilacerante:* +12% Dano Melee e +6px de alcance do corte por nível.
+    3. *Bastião Divino (Escudo):* Reduz o tempo de recarga da Postura de Escudo e amplia o dano refletido.
+  - **Arqueiro:**
+    1. *Passo do Vento:* +0.35 de Velocidade de Movimento permanente por nível.
+    2. *Disparo Voraz:* +10% de Cadência de ataque e +1.2 na velocidade das flechas por nível.
+    3. *Chuva Devastadora:* +15% de Área e +20% de Dano da Chuva de Flechas por nível.
+  - **Mago:**
+    1. *Fonte Mística:* +20 de Mana Máxima e +3.5 MP/s de regeneração por nível.
+    2. *Canalização Arcana:* +15% de Dano Mágico em todos os feitiços por nível.
+    3. *Cataclismo de Chamas:* +15% de Raio e +20 frames de duração do Pilar de Fogo por nível.
 
 ---
 
-## Ambientação Idade Média
+## Habilidades Especiais Ativas (`E` ou `Botão Direito do Mouse`)
 
-- **Muralhas de Pedra Talhada:** Cenários e menus com blocos de rocha de fortaleza medieval com relevo e argamassa rústica.
-- **Tochas Animadas:** Duas tochas em suportes de ferro forjado laterais com fogo crepitante em tempo real e fagulhas/brasas subindo.
-- **Brasão Feudal e Espadas Cruzadas:** Escudo heráldico bipartido em carmesim e azul ultramar com espadas de cruzada entrecruzadas.
-- **Placas e Botões de Carvalho Forjado:** Molduras duplas de ferro forjado com rebites dourados metálicos nos quatro cantos e ranhuras de madeira.
+Cada classe conta com uma habilidade própria e barra de recarga no topo do HUD:
+
+- **Guerreiro — Postura de Escudo:**
+  - Levanta uma barreira frontal luminosa e inquebrável por ~1.5 segundos.
+  - Anula todo dano recebido frontalmente.
+  - **Reflete projéteis inimigos** (como os tiros dos atiradores) de volta na direção oposta, multiplicando seu dano em mais de 2x e atingindo os próprios monstros!
+- **Arqueiro — Chuva de Flechas:**
+  - Dispara uma salva aos céus que cai velozmente em uma área circular selecionada pelo cursor.
+  - Causa dano contínuo a todos os inimigos no raio e aplica **desaceleração (slow)** por 2 segundos.
+- **Mago — Pilar de Fogo:**
+  - Invoca uma erupção colossal de magma e labaredas no ponto do cursor.
+  - Causa dano contínuo intenso em área, consumindo mana dedicado.
+
+---
+
+## Controles
+
+- **W, A, S, D** ou **Setas**: Movimentação.
+- **Mouse (Cursor)**: Mira.
+- **Clique Esquerdo** ou **Espaço**: Ataque Básico da classe.
+- **Tecla E** ou **Clique Direito**: **Habilidade Especial Ativa**.
+- **ESC**: Menu de Pausa Medieval (Retomar, Tela Cheia ou Voltar ao Menu).
 
 ---
 

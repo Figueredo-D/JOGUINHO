@@ -571,3 +571,28 @@ func GetChaosSeedSprite() *ebiten.Image {
 	}
 	return CreateImageFromPattern(pattern, palette)
 }
+
+// GetSoulFragmentSprite gera o cristal de Essência / Fragmento de Alma (moeda meta).
+func GetSoulFragmentSprite() *ebiten.Image {
+	pattern := []string{
+		".....SS.....",
+		"....SAAS....",
+		"...SAAAAS...",
+		"..SAAWWAAS..",
+		".SAAWWWWAAAS",
+		"SAAWWWWWWAAAS",
+		"SAAWWWWWWAAAS",
+		".SAAWWWWAAAS",
+		"..SAAWWAAS..",
+		"...SAAAAS...",
+		"....SAAS....",
+		".....SS.....",
+	}
+	palette := Palette{
+		'.': Trans,
+		'S': color.RGBA{80, 40, 160, 255},   // Borda violeta etérea
+		'A': color.RGBA{130, 90, 255, 255},  // Azul arcano brilhante
+		'W': color.RGBA{235, 230, 255, 255}, // Núcleo de luz pura
+	}
+	return CreateImageFromPattern(pattern, palette)
+}

@@ -15,8 +15,11 @@ import (
 type DropType int
 
 const (
+	// Moeda Meta Roguelite
+	DropSoulFragment DropType = iota
+
 	// Benignos
-	DropHealthPotion DropType = iota
+	DropHealthPotion
 	DropManaPotion
 	DropAgilityStone
 	DropSpeedBoots
@@ -44,6 +47,12 @@ func initDropInfo() {
 		return
 	}
 	dropInfoMap = map[DropType]DropInfo{
+		DropSoulFragment: {
+			Name:      "Fragmento de Alma",
+			IsDebuff:  false,
+			Color:     color.RGBA{R: 160, G: 110, B: 255, A: 255},
+			SpriteImg: sprites.GetSoulFragmentSprite(),
+		},
 		DropHealthPotion: {
 			Name:      "Frasco de Cura (+HP)",
 			IsDebuff:  false,
@@ -105,24 +114,40 @@ func initDropInfo() {
 
 // Drop representa um item deixado no chão por um inimigo.
 type Drop struct {
-	Type     DropType
-	X, Y     float64
-	Lifetime int
-	MaxLife  int
-	Active   bool
-	Frame    int
+	Type       DropType
+	X, Y       float64
+	Lifetime   int
+	MaxLife    int
+	Active     bool
+	Frame      int
+	SoulAmount int // Quantidade de almas se for DropSoulFragment
 }
 
 // NewDrop cria uma nova instância de Drop no chão.
 func NewDrop(dType DropType, x, y float64) *Drop {
 	initDropInfo()
 	return &Drop{
-		Type:     dType,
-		X:        x,
-		Y:        y,
-		Lifetime: 720, // 12 segundos a 60fps
-		MaxLife:  720,
-		Active:   true,
+		Type:       dType,
+		X:          x,
+		Y:          y,
+		Lifetime:   720, // 12 segundos a 60fps
+		MaxLife:    720,
+		Active:     true,
+		SoulAmount: 1,
+	}
+}
+
+// NewSoulDrop cria um drop específico de fragmento de alma com quantia definida.
+func NewSoulDrop(x, y float64, amount int) *Drop {
+	initDropInfo()
+	return &Drop{
+		Type:       DropSoulFragment,
+		X:          x,
+		Y:          y,
+		Lifetime:   900, // 15 segundos
+		MaxLife:    900,
+		Active:     true,
+		SoulAmount: amount,
 	}
 }
 
