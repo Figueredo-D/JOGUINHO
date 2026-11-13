@@ -3,7 +3,9 @@ package game
 import (
 	"github.com/hajimehoshi/ebiten/v2"
 
+	"joguinho/internal/audio"
 	"joguinho/internal/entities"
+	"joguinho/internal/progression"
 	"joguinho/internal/scenes"
 )
 
@@ -12,25 +14,43 @@ const (
 	ScreenHeight = 600
 )
 
-// Game implementa a interface ebiten.Game e gerencia a máquina de estados de cenas.
+// Game implementa a interface ebiten.Game e gerencia cenas, áudio BGM e configurações persistidas.
 type Game struct {
 	currentScene scenes.Scene
 	isFullscreen bool
-	volume       int
+	masterVolume int
+	sfxVolume    int
+	musicVolume  int
 	shouldQuit   bool
 }
 
-// NewGame instancia o ciclo principal com a tela inicial de Menu.
+// NewGame carrega as configurações salvas, inicializa o sintetizador/BGM e abre o Menu Principal.
 func NewGame() *Game {
-	g := &Game{
-		volume: 80,
+	save := progression.GetSave()
+	cfg := save.Settings
+
+	audio.Init()
+	audio.SetMasterVolume(cfg.MasterVolume)
+	audio.SetSFXVolume(cfg.SFXVolume)
+	audio.SetMusicVolume(cfg.MusicVolume)
+
+	if cfg.Fullscreen {
+		ebiten.SetFullscreen(true)
 	}
-	g.currentScene = scenes.NewMenuScene(g)
+
+	g := &Game{
+		isFullscreen: cfg.Fullscreen,
+		masterVolume: cfg.MasterVolume,
+		sfxVolume:    cfg.SFXVolume,
+		musicVolume:  cfg.MusicVolume,
+	}
+	g.SwitchToMenu()
 	return g
 }
 
 // Update executa o ciclo de lógica da cena ativa.
 func (g *Game) Update() error {
+	audio.Tick()
 	if g.shouldQuit {
 		return ebiten.Termination
 	}
@@ -47,7 +67,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	}
 }
 
-// Layout define a resolução lógica interna do jogo (800x600) independente do tamanho da janela.
+// Layout define a resolução lógica interna do jogo (800x600).
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 	return ScreenWidth, ScreenHeight
 }
@@ -55,6 +75,7 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 // --- Implementação de scenes.SceneNavigator ---
 
 func (g *Game) SwitchToMenu() {
+	audio.PlayBGM(audio.TrackMenu)
 	g.currentScene = scenes.NewMenuScene(g)
 }
 
@@ -66,12 +87,27 @@ func (g *Game) SwitchToSanctuary() {
 	g.currentScene = scenes.NewSanctuaryScene(g)
 }
 
+func (g *Game) SwitchToAchievements() {
+	g.currentScene = scenes.NewAchievementsScene(g)
+}
+
+func (g *Game) SwitchToHowToPlay() {
+	g.currentScene = scenes.NewHowToPlayScene(g)
+}
+
 func (g *Game) SwitchToGameplay(class entities.ClassType) {
+	audio.PlayBGM(audio.TrackExploration)
 	g.currentScene = scenes.NewGameplayScene(g, class)
 }
 
 func (g *Game) SwitchToGameOver(score int, wave int, class entities.ClassType, soulsGained int) {
+	audio.PlayBGM(audio.TrackMenu)
 	g.currentScene = scenes.NewGameOverScene(g, score, wave, class, soulsGained)
+}
+
+func (g *Game) SwitchToVictory(summary scenes.RunSummary) {
+	audio.PlayBGM(audio.TrackMenu)
+	g.currentScene = scenes.NewVictoryScene(g, summary)
 }
 
 func (g *Game) SwitchToOptions() {
@@ -81,18 +117,53 @@ func (g *Game) SwitchToOptions() {
 func (g *Game) ToggleFullscreen() {
 	g.isFullscreen = !g.isFullscreen
 	ebiten.SetFullscreen(g.isFullscreen)
+
+	save := progression.GetSave()
+	save.Settings.Fullscreen = g.isFullscreen
+	_ = progression.Save()
 }
 
 func (g *Game) IsFullscreen() bool {
 	return g.isFullscreen
 }
 
-func (g *Game) SetVolume(vol int) {
-	g.volume = vol
+func (g *Game) SetMasterVolume(vol int) {
+	g.masterVolume = vol
+	audio.SetMasterVolume(vol)
+
+	save := progression.GetSave()
+	save.Settings.MasterVolume = vol
+	_ = progression.Save()
 }
 
-func (g *Game) GetVolume() int {
-	return g.volume
+func (g *Game) GetMasterVolume() int {
+	return g.masterVolume
+}
+
+func (g *Game) SetSFXVolume(vol int) {
+	g.sfxVolume = vol
+	audio.SetSFXVolume(vol)
+
+	save := progression.GetSave()
+	save.Settings.SFXVolume = vol
+	_ = progression.Save()
+}
+
+func (g *Game) GetSFXVolume() int {
+	return g.sfxVolume
+}
+
+func (g *Game) SetMusicVolume(vol int) {
+	g.musicVolume = vol
+	audio.SetMusicVolume(vol)
+
+	save := progression.GetSave()
+	save.Settings.MusicVolume = vol
+	_ = progression.Save()
+}
+
+func (g *Game) GetMusicVolume() int {
+	return g.musicVolume
 }
 
 func (g *Game) QuitGame() {

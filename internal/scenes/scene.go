@@ -15,18 +15,28 @@ type Scene interface {
 	Draw(screen *ebiten.Image)
 }
 
-// SceneNavigator provê métodos para transição entre cenas e ações globais de jogo.
+// SceneNavigator provê métodos para transição entre cenas e ações globais de jogo/áudio.
 type SceneNavigator interface {
 	SwitchToMenu()
 	SwitchToClassSelect()
 	SwitchToSanctuary()
+	SwitchToAchievements()
+	SwitchToHowToPlay()
 	SwitchToGameplay(class entities.ClassType)
 	SwitchToGameOver(score int, wave int, class entities.ClassType, soulsGained int)
+	SwitchToVictory(summary RunSummary)
 	SwitchToOptions()
+
 	ToggleFullscreen()
 	IsFullscreen() bool
-	SetVolume(vol int)
-	GetVolume() int
+
+	SetMasterVolume(vol int)
+	GetMasterVolume() int
+	SetSFXVolume(vol int)
+	GetSFXVolume() int
+	SetMusicVolume(vol int)
+	GetMusicVolume() int
+
 	QuitGame()
 }
 

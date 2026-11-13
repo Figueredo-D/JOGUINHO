@@ -341,54 +341,64 @@ func GetShooterSprite() *ebiten.Image {
 
 // Sprites de Itens / Drops (12x12)
 
-// GetHealthPotionSprite gera o frasco de cura.
+// GetHealthPotionSprite gera o frasco de cura em pixel art detalhado (com cruz/coração em relevo e brilhos de vidro).
 func GetHealthPotionSprite() *ebiten.Image {
 	pattern := []string{
-		"....GGGG....",
-		".....WW.....",
-		"....WWWW....",
-		"...WLLLLW...",
-		"..WLLRRLLW..",
-		"..WLRRRRLW..",
-		".WLLRRRRLLW.",
-		".WLRRRRRRLW.",
-		".WLRRRRRRLW.",
-		"..WRRRRRRW..",
-		"...WWWWWW...",
-		"............",
+		".....LLKKLL.....", // Rolha de cortiça com anel de couro
+		".....LLKKLL.....",
+		"......WWWW......", // Gargalo de vidro transparente
+		"....WWWWWWWW....",
+		"...WWLLLLLLWW...", // Ombro do frasco com reflexos
+		"..WWLRRRRRRLWW..",
+		"..WLRRRCCRRRLW..", // CC = Cruz sagrada em relevo
+		".WWLRRCCCCRRLWW.",
+		".WLLRRCCCCRRLLW.",
+		".WLLRRRCCRRRLLW.",
+		".WWLRRRRRRRRLWW.",
+		"..WWLRRRRRRLWW..",
+		"..WWLLRRRRLLWW..",
+		"...WWWWWWWWWW...", // Fundo do frasco reforçado
+		"................",
+		"................",
 	}
 	palette := Palette{
 		'.': Trans,
-		'G': Gold,
-		'W': color.RGBA{220, 235, 255, 220}, // Vidro cristalino
-		'L': color.RGBA{255, 140, 140, 255}, // Líquido reflexivo
-		'R': color.RGBA{220, 30, 30, 255},   // Líquido rubi
+		'K': LeatherDk,
+		'L': Leather,                        // Cortiça da rolha
+		'W': color.RGBA{225, 240, 255, 230}, // Vidro cristalino com reflexo especular
+		'R': color.RGBA{220, 25, 35, 255},   // Elixir carmesim profundo
+		'C': White,                          // Cruz/emblema sagrado em relevo
 	}
 	return CreateImageFromPattern(pattern, palette)
 }
 
-// GetManaPotionSprite gera o frasco de mana.
+// GetManaPotionSprite gera o frasco de mana detalhado (com runa mágica cintilante e vidro refratário).
 func GetManaPotionSprite() *ebiten.Image {
 	pattern := []string{
-		"....GGGG....",
-		".....WW.....",
-		"....WWWW....",
-		"...WLLLLW...",
-		"..WLLBBLLW..",
-		"..WLBBBBLLW.",
-		".WLLBBBBLLW.",
-		".WLBBBBBBLLW",
-		".WLBBBBBBLLW",
-		"..WBBBBBBW..",
-		"...WWWWWW...",
-		"............",
+		".....LLKKLL.....",
+		".....LLKKLL.....",
+		"......WWWW......",
+		"....WWWWWWWW....",
+		"...WWLLLLLLWW...",
+		"..WWLBBBBBBLLW..",
+		"..WLBBBCCBBBBLW.", // CC = Runa mágica de mana
+		".WWLBBCCCCBBLLW.",
+		".WLLBBCCCCBBLLW.",
+		".WLLBBBCCBBBLLW.",
+		".WWLBBBBBBBBLLW.",
+		"..WWLBBBBBBLLW..",
+		"..WWLLBBBBLLWW..",
+		"...WWWWWWWWWW...",
+		"................",
+		"................",
 	}
 	palette := Palette{
 		'.': Trans,
-		'G': Gold,
-		'W': color.RGBA{220, 235, 255, 220},
-		'L': color.RGBA{130, 210, 255, 255},
-		'B': color.RGBA{30, 100, 240, 255},
+		'K': MetalDark,
+		'L': MetalLight,
+		'W': color.RGBA{210, 235, 255, 230},
+		'B': color.RGBA{25, 100, 235, 255},  // Elixir de mana safira
+		'C': color.RGBA{130, 240, 255, 255}, // Emblema místico radiante
 	}
 	return CreateImageFromPattern(pattern, palette)
 }
